@@ -2,19 +2,18 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-st.set_page_config(page_title="Conciliación de Visados y Sellos", layout="wide")
+st.set_page_config(page_title="Conciliación y Auditoría de Visados y Sellos", layout="wide")
 
-st.title("📊 Sistema de Conciliación: Planilla Diaria vs. Totales")
-st.write("Sube ambas planillas para verificar los valores por mes y rango de días.")
+st.title("📊 Sistema de Conciliación y Auditoría Inteligente")
+st.write("Planilla Diaria vs. Planilla de Totales con Detección Automática de Discrepancias.")
 
-# Sección de carga de archivos en la barra lateral
+# Barra lateral para carga
 st.sidebar.header("1. Carga de Archivos")
 file_diaria = st.sidebar.file_uploader("Subir Planilla Diaria (Ingreso Visados)", type=["xlsx", "xls"])
 file_totales = st.sidebar.file_uploader("Subir Planilla de Totales", type=["xlsx", "xls"])
 
 if file_diaria is not None and file_totales is not None:
     try:
-        # Lectura de los archivos excel
         xls_d = pd.ExcelFile(file_diaria)
         sheet_d = st.sidebar.selectbox("Hoja Planilla Diaria", xls_d.sheet_names)
         df_diaria_raw = pd.read_excel(file_diaria, sheet_name=sheet_d)
@@ -25,92 +24,98 @@ if file_diaria is not None and file_totales is not None:
 
         st.success("¡Archivos cargados con éxito!")
 
-        with st.expander("🔍 Ver vista previa de datos originales"):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("**Planilla Diaria (Primeras filas):**")
-                st.dataframe(df_diaria_raw.head(5))
-            with col2:
-                st.write("**Planilla de Totales (Primeras filas):**")
-                st.dataframe(df_totales_raw.head(5))
-
-        st.sidebar.divider()
-        st.sidebar.header("2. Configuración de Columnas y Filtros")
-
         columns_d = list(df_diaria_raw.columns)
         columns_t = list(df_totales_raw.columns)
 
-        # Selección automática o manual de columnas clave según tus indicaciones
-        col_fecha_d = st.sidebar.selectbox("Columna Fecha (Diaria)", columns_d, index=min(1, len(columns_d)-1))
-        col_visado_f = st.sidebar.selectbox("Columna Importe Visado / Oblea (Diaria)", columns_d, index=min(5, len(columns_d)-1))
-        col_sellos_d = st.sidebar.selectbox("Columna Sellos (Diaria)", columns_d, index=min(9, len(columns_d)-1))
-        col_tot_visados_l = st.sidebar.selectbox("Columna Total Visados (Diaria)", columns_d, index=min(11, len(columns_d)-1))
-        col_tot_sellos_p = st.sidebar.selectbox("Columna Total Sellos (Diaria)", columns_d, index=min(15, len(columns_d)-1))
+        st.sidebar.divider()
+        st.sidebar.header("2. Selección de Columnas Clave")
+        
+        default_fecha_d = columns_d[1] if len(columns_d) > 1 else columns_d[0]
+        default_visado_d = columns_d[5] if len(columns_d) > 5 else columns_d[0]
+        default_sellos_d = columns_d[9] if len(columns_d) > 9 else columns_d[0]
+
+        col_fecha_d = st.sidebar.selectbox("Columna Fecha (Diaria - Col B)", columns_d, index=columns_d.index(default_fecha_d) if default_fecha_d in columns_d else 0)
+        col_visado_f = st.sidebar.selectbox("Columna Importe Visado / Oblea (Diaria - Col F)", columns_d, index=columns_d.index(default_visado_d) if default_visado_d in columns_d else 0)
+        col_sellos_d = st.sidebar.selectbox("Columna Sellos (Diaria - Col J)", columns_d, index=columns_d.index(default_sellos_d) if default_sellos_d in columns_d else 0)
 
         st.sidebar.divider()
-        col_concepto_t = st.sidebar.selectbox("Columna Concepto (Totales)", columns_t, index=min(2, len(columns_t)-1))
-        col_monto_t = st.sidebar.selectbox("Columna Monto (Totales)", columns_t, index=min(3, len(columns_t)-1))
-        col_fecha_t = st.sidebar.selectbox("Columna Fecha/Hora (Totales)", columns_t, index=min(4, len(columns_t)-1))
+        default_concepto_t = columns_t[2] if len(columns_t) > 2 else columns_t[0]
+        default_monto_t = columns_t[3] if len(columns_t) > 3 else columns_t[0]
+        default_fecha_t = columns_t[4] if len(columns_t) > 4 else columns_t[0]
 
-        # Procesamiento de Planilla Diaria
+        col_concepto_t = st.sidebar.selectbox("Columna Concepto (Totales - Col C)", columns_t, index=columns_t.index(default_concepto_t) if default_concepto_t in columns_t else 0)
+        col_monto_t = st.sidebar.selectbox("Columna Monto (Totales - Col D)", columns_t, index=columns_t.index(default_monto_t) if default_monto_t in columns_t else 0)
+        col_fecha_t = st.sidebar.selectbox("Columna Fecha/Hora (Totales - Col E)", columns_t, index=columns_t.index(default_fecha_t) if default_fecha_t in columns_t else 0)
+
+        # Procesamiento Planilla Diaria
         df_d = df_diaria_raw.copy()
         df_d['Fecha_dt'] = pd.to_datetime(df_d[col_fecha_d], errors='coerce')
         
-        # Función para limpiar importes y detectar la palabra OBLEA (importe cero)
-        def limpiar_visado(val):
+        def limpiar_monto_visado(val):
             if pd.isna(val):
                 return 0.0
             val_str = str(val).strip().upper()
-            if "OBLEA" in val_str:
+            # Regla exacta en singular: OBLEA equivale a 0
+            if val_str == "OBLEA":
                 return 0.0
             try:
-                return float(str(val).replace('$', '').replace('.', '').replace(',', '.'))
+                val_clean = str(val).replace('$', '').replace('.', '').replace(',', '.').strip()
+                return float(val_clean)
             except:
                 return 0.0
 
-        df_d['Visado_Limpio'] = df_d[col_visado_f].apply(limpiar_visado)
-        df_d['Sellos_Limpio'] = pd.to_numeric(df_d[col_sellos_d].astype(str).str.replace('$', '').str.replace('.', '').str.replace(',', '.'), errors='coerce').fillna(0)
-        df_d['Tot_Visados_Limpio'] = pd.to_numeric(df_d[col_tot_visados_l].astype(str).str.replace('$', '').str.replace('.', '').str.replace(',', '.'), errors='coerce').fillna(0)
-        df_d['Tot_Sellos_Limpio'] = pd.to_numeric(df_d[col_tot_sellos_p].astype(str).str.replace('$', '').str.replace('.', '').str.replace(',', '.'), errors='coerce').fillna(0)
+        def limpiar_monto_general(val):
+            if pd.isna(val):
+                return 0.0
+            try:
+                val_clean = str(val).replace('$', '').replace('.', '').replace(',', '.').strip()
+                return float(val_clean)
+            except:
+                return 0.0
 
-        # Procesamiento de Planilla Totales
+        df_d['Visado_Limpio'] = df_d[col_visado_f].apply(limpiar_monto_visado)
+        df_d['Sellos_Limpio'] = df_d[col_sellos_d].apply(limpiar_monto_general)
+
+        # Procesamiento Planilla Totales
         df_t = df_totales_raw.copy()
         df_t['Fecha_dt'] = pd.to_datetime(df_t[col_fecha_t], errors='coerce')
-        df_t['Monto_Limpio'] = pd.to_numeric(df_t[col_monto_t].astype(str).str.replace('$', '').str.replace('.', '').str.replace(',', '.'), errors='coerce').fillna(0)
+        df_t['Monto_Limpio'] = df_t[col_monto_t].apply(limpiar_monto_general)
         df_t['Concepto_Limpio'] = df_t[col_concepto_t].astype(str).str.strip().str.upper()
 
-        # Selector de Mes y Rango de Días
-        valid_dates = df_d['Fecha_dt'].dropna()
-        if not valid_dates.empty:
-            min_date = valid_dates.min().date()
-            max_date = valid_dates.max().date()
-            
-            st.sidebar.header("3. Filtro de Período")
+        # Rango de fechas
+        valid_dates_t = df_t['Fecha_dt'].dropna()
+        valid_dates_d = df_d['Fecha_dt'].dropna()
+
+        if not valid_dates_t.empty or not valid_dates_d.empty:
+            min_date = min(valid_dates_t.min() if not valid_dates_t.empty else valid_dates_d.min(), valid_dates_d.min() if not valid_dates_d.empty else valid_dates_t.min()).date()
+            max_date = max(valid_dates_t.max() if not valid_dates_t.empty else valid_dates_d.max(), valid_dates_d.max() if not valid_dates_d.empty else valid_dates_t.max()).date()
+
+            st.sidebar.divider()
+            st.sidebar.header("3. Período de Análisis")
             rango_fechas = st.sidebar.date_input("Seleccionar Rango de Fechas", [min_date, max_date], min_value=min_date, max_value=max_date)
-            
+
             if len(rango_fechas) == 2:
                 start_date, end_date = rango_fechas
-                
-                # Filtrar dataframes por el período seleccionado
+
                 df_d_filtered = df_d[(df_d['Fecha_dt'].dt.date >= start_date) & (df_d['Fecha_dt'].dt.date <= end_date)]
                 df_t_filtered = df_t[(df_t['Fecha_dt'].dt.date >= start_date) & (df_t['Fecha_dt'].dt.date <= end_date)]
 
-                st.subheader(f"📅 Resultados de Conciliación: {start_date} al {end_date}")
+                st.subheader(f"📅 Conciliación y Auditoría del período: {start_date} al {end_date}")
 
                 # Totales Planilla Diaria
                 tot_visado_diaria = df_d_filtered['Visado_Limpio'].sum()
                 tot_sellos_diaria = df_d_filtered['Sellos_Limpio'].sum()
 
-                # Totales Planilla Totales por concepto
-                mask_tasa = df_t_filtered['Concepto_Limpio'].str.contains('TASA DE VISADO|VISADO', na=False)
-                mask_sellos = df_t_filtered['Concepto_Limpio'].str.contains('SELLOS|RECAUDACION', na=False)
+                # Totales Planilla Totales
+                mask_tasa = df_t_filtered['Concepto_Limpio'].str.contains('INGRESO POR TASA DE VISADO', na=False)
+                mask_sellos = df_t_filtered['Concepto_Limpio'].str.contains('RECAUDACION SELLOS', na=False)
 
                 tot_visado_totales = df_t_filtered.loc[mask_tasa, 'Monto_Limpio'].sum()
                 tot_sellos_totales = df_t_filtered.loc[mask_sellos, 'Monto_Limpio'].sum()
 
-                # Mostrar métricas y conciliación en columnas
+                # Métricas lado a lado
                 col1, col2 = st.columns(2)
-                
+
                 with col1:
                     st.markdown("### 🏛️ Tasa de Visado")
                     st.metric(label="Planilla Diaria", value=f"${tot_visado_diaria:,.2f}")
@@ -119,7 +124,7 @@ if file_diaria is not None and file_totales is not None:
                     if abs(diff_visado) < 0.01:
                         st.success("✅ **ESTÁ OK (Sin diferencias en Visados)**")
                     else:
-                        st.error(f"❌ **DIFERENCIA DETECTADA:** ${diff_visado:,.2f}")
+                        st.error(f"❌ **DIFERENCIA:** ${diff_visado:,.2f}")
 
                 with col2:
                     st.markdown("### 🏷️ Recaudación Sellos")
@@ -129,23 +134,43 @@ if file_diaria is not None and file_totales is not None:
                     if abs(diff_sellos) < 0.01:
                         st.success("✅ **ESTÁ OK (Sin diferencias en Sellos)**")
                     else:
-                        st.error(f"❌ **DIFERENCIA DETECTADA:** ${diff_sellos:,.2f}")
+                        st.error(f"❌ **DIFERENCIA:** ${diff_sellos:,.2f}")
 
-                # Análisis diario detallado
-                with st.expander("📊 Ver detalle diario y desglose"):
-                    st.write("**Detalle Diaria Agrupada por Día:**")
-                    diaria_diaria = df_d_filtered.groupby(df_d_filtered['Fecha_dt'].dt.date)[['Visado_Limpio', 'Sellos_Limpio']].sum().reset_index()
-                    st.dataframe(diaria_diaria)
-                    
-                    st.write("**Registros en Planilla Totales:**")
-                    st.dataframe(df_t_filtered[['Fecha_dt', col_concepto_t, col_monto_t]])
+                st.divider()
+                st.subheader("🕵️‍♂️ Auditor Inteligente: Detalle para el Análisis Humano")
+
+                # Auditoría de Visados
+                if abs(diff_visado) >= 0.01:
+                    st.warning(f"⚠️ **Desvío detectado en Tasa de Visado por ${diff_visado:,.2f}**")
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.markdown("**Detalle Planilla Diaria (Visados)**")
+                        st.dataframe(df_d_filtered[[col_fecha_d, col_visado_f, 'Visado_Limpio']])
+                    with col_b:
+                        st.markdown("**Detalle Planilla Totales (Tasa de Visado)**")
+                        st.dataframe(df_t_filtered.loc[mask_tasa, [col_fecha_t, col_concepto_t, col_monto_t]])
+                else:
+                    st.success("🔍 Los visados coinciden exactamente en el total del período.")
+
+                # Auditoría de Sellos
+                if abs(diff_sellos) >= 0.01:
+                    st.warning(f"⚠️ **Desvío detectado en Recaudación de Sellos por ${diff_sellos:,.2f}**")
+                    col_c, col_d = st.columns(2)
+                    with col_c:
+                        st.markdown("**Detalle Planilla Diaria (Sellos)**")
+                        st.dataframe(df_d_filtered[[col_fecha_d, col_sellos_d, 'Sellos_Limpio']])
+                    with col_d:
+                        st.markdown("**Detalle Planilla Totales (Recaudación Sellos)**")
+                        st.dataframe(df_t_filtered.loc[mask_sellos, [col_fecha_t, col_concepto_t, col_monto_t]])
+                else:
+                    st.success("🔍 Los sellos coinciden exactamente en el total del período.")
 
             else:
-                st.info("Por favor, selecciona un rango de fechas completo en la barra lateral.")
+                st.warning("Seleccioná un rango de fechas válido.")
         else:
-            st.warning("No se pudieron detectar fechas válidas en la Planilla Diaria.")
+            st.warning("No se encontraron fechas válidas en los archivos.")
 
     except Exception as e:
-        st.error(f"Ocurrió un error al procesar los archivos: {e}")
+        st.error(f"Ocurrió un error al procesar: {e}")
 else:
-    st.info("Por favor, sube ambos archivos en la barra lateral para comenzar.")
+    st.info("Por favor, sube ambos archivos en la barra lateral.")
