@@ -31,25 +31,33 @@ if file_diaria is not None and file_totales is not None:
         columns_d = list(df_diaria_raw.columns)
         columns_t = list(df_totales_raw.columns)
 
+        # Función auxiliar para autoseleccionar columnas por palabras clave
+        def encontrar_indice_columna(columns, keywords, default_idx):
+            for kw in keywords:
+                for idx, col in enumerate(columns):
+                    if kw in str(col).upper():
+                        return idx
+            return default_idx if default_idx < len(columns) else 0
+
         st.sidebar.divider()
         st.sidebar.header("2. Selección de Columnas Clave")
         
-        default_fecha_d = columns_d[1] if len(columns_d) > 1 else columns_d[0]
-        default_visado_d = columns_d[4] if len(columns_d) > 4 else columns_d[0]
-        default_sellos_d = columns_d[8] if len(columns_d) > 8 else columns_d[0]
+        idx_fecha_d = encontrar_indice_columna(columns_d, ['FECHA', 'DATE'], 1)
+        idx_visado_d = encontrar_indice_columna(columns_d, ['VISADO', 'IMPORTE VISADOS', 'VISADOS'], 4)
+        idx_sellos_d = encontrar_indice_columna(columns_d, ['SELLO', 'SELLOS'], 8)
 
-        col_fecha_d = st.sidebar.selectbox("Columna Fecha (Diaria - Col B)", columns_d, index=columns_d.index(default_fecha_d) if default_fecha_d in columns_d else 0)
-        col_visado_f = st.sidebar.selectbox("Columna Importe Visado (Diaria - Col F)", columns_d, index=columns_d.index(default_visado_d) if default_visado_d in columns_d else 0)
-        col_sellos_d = st.sidebar.selectbox("Columna Sellos (Diaria - Col J)", columns_d, index=columns_d.index(default_sellos_d) if default_sellos_d in columns_d else 0)
+        col_fecha_d = st.sidebar.selectbox("Columna Fecha (Diaria)", columns_d, index=idx_fecha_d)
+        col_visado_f = st.sidebar.selectbox("Columna Importe Visado (Diaria)", columns_d, index=idx_visado_d)
+        col_sellos_d = st.sidebar.selectbox("Columna Sellos (Diaria)", columns_d, index=idx_sellos_d)
 
         st.sidebar.divider()
-        default_concepto_t = columns_t[2] if len(columns_t) > 2 else columns_t[0]
-        default_monto_t = columns_t[3] if len(columns_t) > 3 else columns_t[0]
-        default_fecha_t = columns_t[4] if len(columns_t) > 4 else columns_t[0]
+        idx_concepto_t = encontrar_indice_columna(columns_t, ['CONCEPTO', 'CUENTA', 'DESCRIPCION'], 2)
+        idx_monto_t = encontrar_indice_columna(columns_t, ['MONTO', 'IMPORTE', 'VALOR'], 3)
+        idx_fecha_t = encontrar_indice_columna(columns_t, ['FECHA', 'HORA', 'DATE'], 4)
 
-        col_concepto_t = st.sidebar.selectbox("Columna Concepto (Totales - Col C)", columns_t, index=columns_t.index(default_concepto_t) if default_concepto_t in columns_t else 0)
-        col_monto_t = st.sidebar.selectbox("Columna Monto (Totales - Col D)", columns_t, index=columns_t.index(default_monto_t) if default_monto_t in columns_t else 0)
-        col_fecha_t = st.sidebar.selectbox("Columna Fecha/Hora (Totales - Col E)", columns_t, index=columns_t.index(default_fecha_t) if default_fecha_t in columns_t else 0)
+        col_concepto_t = st.sidebar.selectbox("Columna Concepto (Totales)", columns_t, index=idx_concepto_t)
+        col_monto_t = st.sidebar.selectbox("Columna Monto (Totales)", columns_t, index=idx_monto_t)
+        col_fecha_t = st.sidebar.selectbox("Columna Fecha/Hora (Totales)", columns_t, index=idx_fecha_t)
 
         # Procesamiento Planilla Diaria
         df_d = df_diaria_raw.copy()
@@ -85,19 +93,15 @@ if file_diaria is not None and file_totales is not None:
         df_t['Monto_Limpio'] = df_t[col_monto_t].apply(limpiar_monto)
         df_t['Concepto_Limpio'] = df_t[col_concepto_t].astype(str).str.strip().str.upper()
 
-        # Detección automática de la fecha presente en los archivos
+        # Detección automática de fecha
         valid_dates_d = df_d['Fecha_dt'].dropna()
-        if not valid_dates_d.empty:
-            detected_date = valid_dates_d.min().date()
-        else:
-            detected_date = pd.Timestamp.today().date()
+        detected_date = valid_dates_d.min().date() if not valid_dates_d.empty else pd.Timestamp.today().date()
 
         st.sidebar.divider()
         st.sidebar.header("3. Período de Análisis")
-        # Selector de fecha optimizado con la fecha detectada por defecto
         selected_date = st.sidebar.date_input("Fecha de Auditoría", value=detected_date)
 
-        # Filtrado estricto usando .dt.date para evitar conflictos de tipo con datetime64[s]
+        # Filtrado estricto
         df_d_filtered = df_d[df_d['Fecha_dt'].dt.date == selected_date].copy()
         df_t_filtered = df_t[df_t['Fecha_dt'].dt.date == selected_date].copy()
 
@@ -138,33 +142,54 @@ if file_diaria is not None and file_totales is not None:
                 st.error(f"❌ **DIFERENCIA:** ${diff_sellos:,.2f}")
 
         st.divider()
-        st.subheader("🕵️‍♂️ Auditor Inteligente (Ordenado por Importe de Mayor a Menor)")
+        st.subheader("🕵️‍♂️ Auditor Inteligente (Vista Unificada y Detección Automática)")
 
-        # Auditoría de Visados ordenada estrictamente por importe descendente
-        st.markdown("#### Detalle: Tasa de Visado")
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.markdown("**Planilla Diaria (Visados)**")
-            df_d_visado_sorted = df_d_filtered[[col_fecha_d, col_visado_f, 'Visado_Limpio']].sort_values(by='Visado_Limpio', ascending=False)
-            st.dataframe(df_d_visado_sorted, use_container_width=True)
-        with col_b:
-            st.markdown("**Planilla Totales (Tasa de Visado)**")
-            df_t_visado_sorted = df_t_filtered.loc[mask_tasa, [col_fecha_t, col_concepto_t, col_monto_t, 'Monto_Limpio']].sort_values(by='Monto_Limpio', ascending=False)
-            st.dataframe(df_t_visado_sorted, use_container_width=True)
+        # --- VISADOS: Tabla Unificada y Diagnóstico ---
+        st.markdown("#### 🏛️ Detalle Comparativo: Tasa de Visado")
+        df_d_v = df_d_filtered[[col_fecha_d, col_visado_f, 'Visado_Limpio']].sort_values(by='Visado_Limpio', ascending=False).reset_index(drop=True)
+        df_t_v = df_t_filtered.loc[mask_tasa, [col_fecha_t, col_concepto_t, col_monto_t, 'Monto_Limpio']].sort_values(by='Monto_Limpio', ascending=False).reset_index(drop=True)
+        
+        # Unir lado a lado con sufijos claros para un solo scrollbar
+        df_merged_v = pd.concat([df_d_v.add_prefix('Diaria_'), df_t_v.add_prefix('Totales_')], axis=1)
+        st.dataframe(df_merged_v, use_container_width=True)
+
+        # Diagnóstico Inteligente Visados
+        discrepancias_v = []
+        max_len_v = max(len(df_d_v), len(df_t_v))
+        for i in range(max_len_v):
+            val_d = df_d_v.loc[i, 'Visado_Limpio'] if i < len(df_d_v) else 0.0
+            val_t = df_t_v.loc[i, 'Monto_Limpio'] if i < len(df_t_v) else 0.0
+            if abs(val_d - val_t) > 0.01:
+                discrepancias_v.append(f"Fila {i+1}: Planilla Diaria tiene ${val_d:,.2f} vs Planilla Totales tiene ${val_t:,.2f}")
+
+        if len(discrepancias_v) == 0 and abs(diff_visado) < 0.01:
+            st.success("✨ **Auditoría Visados: Sin errores. Todos los registros coinciden perfectamente.**")
+        else:
+            st.error(f"🚨 **Desvíos Detectados en Visados:**\n" + "\n".join([f"- {d}" for d in discrepancias_v]))
 
         st.divider()
 
-        # Auditoría de Sellos ordenada estrictamente por importe descendente
-        st.markdown("#### Detalle: Recaudación de Sellos")
-        col_c, col_d = st.columns(2)
-        with col_c:
-            st.markdown("**Planilla Diaria (Sellos)**")
-            df_d_sellos_sorted = df_d_filtered[[col_fecha_d, col_sellos_d, 'Sellos_Limpio']].sort_values(by='Sellos_Limpio', ascending=False)
-            st.dataframe(df_d_sellos_sorted, use_container_width=True)
-        with col_d:
-            st.markdown("**Planilla Totales (Recaudación Sellos)**")
-            df_t_sellos_sorted = df_t_filtered.loc[mask_sellos, [col_fecha_t, col_concepto_t, col_monto_t, 'Monto_Limpio']].sort_values(by='Monto_Limpio', ascending=False)
-            st.dataframe(df_t_sellos_sorted, use_container_width=True)
+        # --- SELLOS: Tabla Unificada y Diagnóstico ---
+        st.markdown("#### 🏷️ Detalle Comparativo: Recaudación de Sellos")
+        df_d_s = df_d_filtered[[col_fecha_d, col_sellos_d, 'Sellos_Limpio']].sort_values(by='Sellos_Limpio', ascending=False).reset_index(drop=True)
+        df_t_s = df_t_filtered.loc[mask_sellos, [col_fecha_t, col_concepto_t, col_monto_t, 'Monto_Limpio']].sort_values(by='Monto_Limpio', ascending=False).reset_index(drop=True)
+        
+        df_merged_s = pd.concat([df_d_s.add_prefix('Diaria_'), df_t_s.add_prefix('Totales_')], axis=1)
+        st.dataframe(df_merged_s, use_container_width=True)
+
+        # Diagnóstico Inteligente Sellos
+        discrepancias_s = []
+        max_len_s = max(len(df_d_s), len(df_t_s))
+        for i in range(max_len_s):
+            val_d = df_d_s.loc[i, 'Sellos_Limpio'] if i < len(df_d_s) else 0.0
+            val_t = df_t_s.loc[i, 'Monto_Limpio'] if i < len(df_t_s) else 0.0
+            if abs(val_d - val_t) > 0.01:
+                discrepancias_s.append(f"Fila {i+1}: Planilla Diaria tiene ${val_d:,.2f} vs Planilla Totales tiene ${val_t:,.2f}")
+
+        if len(discrepancias_s) == 0 and abs(diff_sellos) < 0.01:
+            st.success("✨ **Auditoría Sellos: Sin errores. Todos los registros coinciden perfectamente.**")
+        else:
+            st.error(f"🚨 **Desvíos Detectados en Sellos:**\n" + "\n".join([f"- {d}" for d in discrepancias_s]))
 
     except Exception as e:
         st.error(f"Ocurrió un error al procesar: {e}")
