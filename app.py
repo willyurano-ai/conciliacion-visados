@@ -12,7 +12,6 @@ st.sidebar.header("1. Carga de Archivos")
 file_diaria = st.sidebar.file_uploader("Subir Planilla Diaria (Ingreso Visados)", type=["xlsx", "xls"])
 file_totales = st.sidebar.file_uploader("Subir Planilla de Totales", type=["xlsx", "xls"])
 
-# MODIFICACIÓN: Parámetro para saltar filas de título en la Planilla Diaria
 skip_rows_d = st.sidebar.number_input("Filas a omitir al inicio (Planilla Diaria)", min_value=0, max_value=5, value=2, help="Normalmente 2 para saltar títulos y ubicar las columnas correctamente.")
 
 if file_diaria is not None and file_totales is not None:
@@ -42,6 +41,7 @@ if file_diaria is not None and file_totales is not None:
         col_sellos_d = st.sidebar.selectbox("Columna Sellos (Diaria - Col J)", columns_d, index=columns_d.index(default_sellos_d) if default_sellos_d in columns_d else 0)
 
         st.sidebar.divider()
+        # En la planilla de totales, la primera fila suele ser cabecera interna o datos con nombres de columnas
         default_concepto_t = columns_t[2] if len(columns_t) > 2 else columns_t[0]
         default_monto_t = columns_t[3] if len(columns_t) > 3 else columns_t[0]
         default_fecha_t = columns_t[4] if len(columns_t) > 4 else columns_t[0]
@@ -58,7 +58,6 @@ if file_diaria is not None and file_totales is not None:
             if pd.isna(val):
                 return 0.0
             val_str = str(val).strip().upper()
-            # MODIFICACIÓN: Cobertura ampliada para textos especiales que no deben romper la suma
             if val_str in ["OBLEA", "OBLEAS", "ARBA", "S/D", "N/A", ""]:
                 return 0.0
             try:
@@ -71,7 +70,6 @@ if file_diaria is not None and file_totales is not None:
             if pd.isna(val):
                 return 0.0
             val_str = str(val).strip().upper()
-            # MODIFICACIÓN: Cobertura ampliada en montos generales
             if val_str in ["OBLEA", "OBLEAS", "ARBA", "S/D", "N/A", ""]:
                 return 0.0
             try:
@@ -83,8 +81,12 @@ if file_diaria is not None and file_totales is not None:
         df_d['Visado_Limpio'] = df_d[col_visado_f].apply(limpiar_monto_visado)
         df_d['Sellos_Limpio'] = df_d[col_sellos_d].apply(limpiar_monto_general)
 
-        # Procesamiento Planilla Totales
+        # Procesamiento Planilla Totales (Saltando fila de cabecera si contiene texto descriptivo)
         df_t = df_totales_raw.copy()
+        # Si la primera fila es la cabecera repetida ("Cuenta Contable", "Monto", etc.), la saltamos
+        if str(df_t.iloc[0][col_concepto_t]).strip().upper() in ["CUENTA CONTABLE", "CONCEPTO"]:
+            df_t = df_t.iloc[1:].copy()
+
         df_t['Fecha_dt'] = pd.to_datetime(df_t[col_fecha_t], errors='coerce')
         df_t['Monto_Limpio'] = df_t[col_monto_t].apply(limpiar_monto_general)
         df_t['Concepto_Limpio'] = df_t[col_concepto_t].astype(str).str.strip().str.upper()
@@ -113,7 +115,7 @@ if file_diaria is not None and file_totales is not None:
                 tot_visado_diaria = df_d_filtered['Visado_Limpio'].sum()
                 tot_sellos_diaria = df_d_filtered['Sellos_Limpio'].sum()
 
-                # Totales Planilla Totales
+                # Totales Planilla Totales agrupando por concepto
                 mask_tasa = df_t_filtered['Concepto_Limpio'].str.contains('INGRESO POR TASA DE VISADO', na=False)
                 mask_sellos = df_t_filtered['Concepto_Limpio'].str.contains('RECAUDACION SELLOS', na=False)
 
@@ -125,8 +127,8 @@ if file_diaria is not None and file_totales is not None:
 
                 with col1:
                     st.markdown("### 🏛️ Tasa de Visado")
-                    st.metric(label="Planilla Diaria", value=f"${tot_visado_diaria:,.2f}")
-                    st.metric(label="Planilla Totales", value=f"${tot_visado_totales:,.2f}")
+                    st.metric(label="Planilla Diaria (Suma Renglones)", value=f"${tot_visado_diaria:,.2f}")
+                    st.metric(label="Planilla Totales (Suma Concepto)", value=f"${tot_visado_totales:,.2f}")
                     diff_visado = round(tot_visado_diaria - tot_visado_totales, 2)
                     if abs(diff_visado) < 0.01:
                         st.success("✅ **ESTÁ OK (Sin diferencias en Visados)**")
@@ -135,8 +137,8 @@ if file_diaria is not None and file_totales is not None:
 
                 with col2:
                     st.markdown("### 🏷️ Recaudación Sellos")
-                    st.metric(label="Planilla Diaria", value=f"${tot_sellos_diaria:,.2f}")
-                    st.metric(label="Planilla Totales", value=f"${tot_sellos_totales:,.2f}")
+                    st.metric(label="Planilla Diaria (Suma Renglones)", value=f"${tot_sellos_diaria:,.2f}")
+                    st.metric(label="Planilla Totales (Suma Concepto)", value=f"${tot_sellos_totales:,.2f}")
                     diff_sellos = round(tot_sellos_diaria - tot_sellos_totales, 2)
                     if abs(diff_sellos) < 0.01:
                         st.success("✅ **ESTÁ OK (Sin diferencias en Sellos)**")
