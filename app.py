@@ -12,11 +12,14 @@ st.sidebar.header("1. Carga de Archivos")
 file_diaria = st.sidebar.file_uploader("Subir Planilla Diaria (Ingreso Visados)", type=["xlsx", "xls"])
 file_totales = st.sidebar.file_uploader("Subir Planilla de Totales", type=["xlsx", "xls"])
 
+# MODIFICACIÓN: Parámetro para saltar filas de título en la Planilla Diaria
+skip_rows_d = st.sidebar.number_input("Filas a omitir al inicio (Planilla Diaria)", min_value=0, max_value=5, value=2, help="Normalmente 2 para saltar títulos y ubicar las columnas correctamente.")
+
 if file_diaria is not None and file_totales is not None:
     try:
         xls_d = pd.ExcelFile(file_diaria)
         sheet_d = st.sidebar.selectbox("Hoja Planilla Diaria", xls_d.sheet_names)
-        df_diaria_raw = pd.read_excel(file_diaria, sheet_name=sheet_d)
+        df_diaria_raw = pd.read_excel(file_diaria, sheet_name=sheet_d, skiprows=skip_rows_d)
 
         xls_t = pd.ExcelFile(file_totales)
         sheet_t = st.sidebar.selectbox("Hoja Planilla Totales", xls_t.sheet_names)
@@ -55,8 +58,8 @@ if file_diaria is not None and file_totales is not None:
             if pd.isna(val):
                 return 0.0
             val_str = str(val).strip().upper()
-            # Regla exacta en singular: OBLEA equivale a 0
-            if val_str == "OBLEA":
+            # MODIFICACIÓN: Cobertura ampliada para textos especiales que no deben romper la suma
+            if val_str in ["OBLEA", "OBLEAS", "ARBA", "S/D", "N/A", ""]:
                 return 0.0
             try:
                 val_clean = str(val).replace('$', '').replace('.', '').replace(',', '.').strip()
@@ -66,6 +69,10 @@ if file_diaria is not None and file_totales is not None:
 
         def limpiar_monto_general(val):
             if pd.isna(val):
+                return 0.0
+            val_str = str(val).strip().upper()
+            # MODIFICACIÓN: Cobertura ampliada en montos generales
+            if val_str in ["OBLEA", "OBLEAS", "ARBA", "S/D", "N/A", ""]:
                 return 0.0
             try:
                 val_clean = str(val).replace('$', '').replace('.', '').replace(',', '.').strip()
