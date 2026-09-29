@@ -32,34 +32,38 @@ if file_diaria is not None and file_totales is not None:
         columns_d = list(df_diaria_raw.columns)
         columns_t = list(df_totales_raw.columns)
 
-        # Función de búsqueda inteligente con exclusión de palabras trampa (como Número, Cantidad, Operador)
-        def encontrar_columna_inteligente(columns, exact_keywords, avoid_keywords, default_idx):
-            for idx, col in enumerate(columns):
-                c_up = str(col).upper()
-                if any(k in c_up for k in exact_keywords) and not any(a in c_up for a in avoid_keywords):
-                    return idx
-            for idx, col in enumerate(columns):
-                c_up = str(col).upper()
-                if any(k in c_up for k in exact_keywords):
-                    return idx
+        # Función de selección robusta y exacta para columnas clave
+        def encontrar_indice_seguro(columns, keywords, default_idx):
+            for kw in keywords:
+                for idx, col in enumerate(columns):
+                    c_up = str(col).strip().upper()
+                    if kw.upper() == c_up:
+                        return idx
+            for kw in keywords:
+                for idx, col in enumerate(columns):
+                    c_up = str(col).strip().upper()
+                    if kw.upper() in c_up:
+                        # Evitar confusiones con "Número Visado" u otros campos numéricos
+                        if 'VISADO' in kw.upper() and ('NUMERO' in c_up or 'NRO' in c_up or 'CANTIDAD' in c_up):
+                            continue
+                        return idx
             return default_idx if default_idx < len(columns) else 0
 
         st.sidebar.divider()
         st.sidebar.header("2. Selección de Columnas Clave")
         
-        idx_fecha_d = encontrar_columna_inteligente(columns_d, ['FECHA', 'DATE'], [], 1)
-        # Búsqueda específica para evitar que tome "Número Visado" u otros campos erróneos
-        idx_visado_d = encontrar_columna_inteligente(columns_d, ['IMPORTE VISADOS', 'VISADOS', 'VISADO'], ['NUMERO', 'NRO', 'CANTIDAD', 'OPERADOR'], 4)
-        idx_sellos_d = encontrar_columna_inteligente(columns_d, ['SELLO', 'SELLOS'], [], 8)
+        idx_fecha_d = encontrar_indice_seguro(columns_d, ['FECHA', 'DATE'], 1)
+        idx_visado_d = encontrar_indice_seguro(columns_d, ['IMPORTE VISADOS', 'IMPORTE VISADO', 'VISADOS', 'VISADO'], 4)
+        idx_sellos_d = encontrar_indice_seguro(columns_d, ['SELLOS', 'SELLO'], 8)
 
         col_fecha_d = st.sidebar.selectbox("Columna Fecha (Diaria)", columns_d, index=idx_fecha_d)
         col_visado_f = st.sidebar.selectbox("Columna Importe Visado (Diaria)", columns_d, index=idx_visado_d)
         col_sellos_d = st.sidebar.selectbox("Columna Sellos (Diaria)", columns_d, index=idx_sellos_d)
 
         st.sidebar.divider()
-        idx_concepto_t = encontrar_columna_inteligente(columns_t, ['CONCEPTO', 'CUENTA', 'DESCRIPCION'], [], 2)
-        idx_monto_t = encontrar_columna_inteligente(columns_t, ['MONTO', 'IMPORTE', 'VALOR'], [], 3)
-        idx_fecha_t = encontrar_columna_inteligente(columns_t, ['FECHA', 'HORA', 'DATE'], [], 4)
+        idx_concepto_t = encontrar_indice_seguro(columns_t, ['CONCEPTO', 'CUENTA', 'DESCRIPCION'], 2)
+        idx_monto_t = encontrar_indice_seguro(columns_t, ['MONTO', 'IMPORTE', 'VALOR'], 3)
+        idx_fecha_t = encontrar_indice_seguro(columns_t, ['FECHA', 'HORA', 'DATE'], 4)
 
         col_concepto_t = st.sidebar.selectbox("Columna Concepto (Totales)", columns_t, index=idx_concepto_t)
         col_monto_t = st.sidebar.selectbox("Columna Monto (Totales)", columns_t, index=idx_monto_t)
@@ -99,7 +103,7 @@ if file_diaria is not None and file_totales is not None:
         df_t['Monto_Limpio'] = df_t[col_monto_t].apply(limpiar_monto)
         df_t['Concepto_Limpio'] = df_t[col_concepto_t].astype(str).str.strip().str.upper()
 
-        # Detección automática de fecha
+        # Detección automática de fecha real del archivo
         valid_dates_d = df_d['Fecha_dt'].dropna()
         detected_date = valid_dates_d.min().date() if not valid_dates_d.empty else pd.Timestamp.today().date()
 
