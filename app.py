@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from collections import Counter
 
 st.set_page_config(page_title="Conciliación y Auditoría de Visados y Sellos", layout="wide")
 
@@ -31,29 +32,34 @@ if file_diaria is not None and file_totales is not None:
         columns_d = list(df_diaria_raw.columns)
         columns_t = list(df_totales_raw.columns)
 
-        # Función auxiliar para autoseleccionar columnas por palabras clave
-        def encontrar_indice_columna(columns, keywords, default_idx):
-            for kw in keywords:
-                for idx, col in enumerate(columns):
-                    if kw in str(col).upper():
-                        return idx
+        # Función de búsqueda inteligente con exclusión de palabras trampa (como Número, Cantidad, Operador)
+        def encontrar_columna_inteligente(columns, exact_keywords, avoid_keywords, default_idx):
+            for idx, col in enumerate(columns):
+                c_up = str(col).upper()
+                if any(k in c_up for k in exact_keywords) and not any(a in c_up for a in avoid_keywords):
+                    return idx
+            for idx, col in enumerate(columns):
+                c_up = str(col).upper()
+                if any(k in c_up for k in exact_keywords):
+                    return idx
             return default_idx if default_idx < len(columns) else 0
 
         st.sidebar.divider()
         st.sidebar.header("2. Selección de Columnas Clave")
         
-        idx_fecha_d = encontrar_indice_columna(columns_d, ['FECHA', 'DATE'], 1)
-        idx_visado_d = encontrar_indice_columna(columns_d, ['VISADO', 'IMPORTE VISADOS', 'VISADOS'], 4)
-        idx_sellos_d = encontrar_indice_columna(columns_d, ['SELLO', 'SELLOS'], 8)
+        idx_fecha_d = encontrar_columna_inteligente(columns_d, ['FECHA', 'DATE'], [], 1)
+        # Búsqueda específica para evitar que tome "Número Visado" u otros campos erróneos
+        idx_visado_d = encontrar_columna_inteligente(columns_d, ['IMPORTE VISADOS', 'VISADOS', 'VISADO'], ['NUMERO', 'NRO', 'CANTIDAD', 'OPERADOR'], 4)
+        idx_sellos_d = encontrar_columna_inteligente(columns_d, ['SELLO', 'SELLOS'], [], 8)
 
         col_fecha_d = st.sidebar.selectbox("Columna Fecha (Diaria)", columns_d, index=idx_fecha_d)
         col_visado_f = st.sidebar.selectbox("Columna Importe Visado (Diaria)", columns_d, index=idx_visado_d)
         col_sellos_d = st.sidebar.selectbox("Columna Sellos (Diaria)", columns_d, index=idx_sellos_d)
 
         st.sidebar.divider()
-        idx_concepto_t = encontrar_indice_columna(columns_t, ['CONCEPTO', 'CUENTA', 'DESCRIPCION'], 2)
-        idx_monto_t = encontrar_indice_columna(columns_t, ['MONTO', 'IMPORTE', 'VALOR'], 3)
-        idx_fecha_t = encontrar_indice_columna(columns_t, ['FECHA', 'HORA', 'DATE'], 4)
+        idx_concepto_t = encontrar_columna_inteligente(columns_t, ['CONCEPTO', 'CUENTA', 'DESCRIPCION'], [], 2)
+        idx_monto_t = encontrar_columna_inteligente(columns_t, ['MONTO', 'IMPORTE', 'VALOR'], [], 3)
+        idx_fecha_t = encontrar_columna_inteligente(columns_t, ['FECHA', 'HORA', 'DATE'], [], 4)
 
         col_concepto_t = st.sidebar.selectbox("Columna Concepto (Totales)", columns_t, index=idx_concepto_t)
         col_monto_t = st.sidebar.selectbox("Columna Monto (Totales)", columns_t, index=idx_monto_t)
@@ -123,53 +129,64 @@ if file_diaria is not None and file_totales is not None:
 
         with col1:
             st.markdown("### 🏛️ Tasa de Visado")
-            st.metric(label="Planilla Diaria (Suma Renglones)", value=f"${tot_visado_diaria:,.2f}")
-            st.metric(label="Planilla Totales (Suma Concepto)", value=f"${tot_visado_totales:,.2f}")
+            st.metric(label="Planilla Diaria", value=f"${tot_visado_diaria:,.2f}")
+            st.metric(label="Planilla Totales", value=f"${tot_visado_totales:,.2f}")
             diff_visado = round(tot_visado_diaria - tot_visado_totales, 2)
             if abs(diff_visado) < 0.01:
                 st.success("✅ **ESTÁ OK (Sin diferencias en Visados)**")
             else:
-                st.error(f"❌ **DIFERENCIA:** ${diff_visado:,.2f}")
+                st.error(f"❌ **DIFERENCIA TOTAL:** ${diff_visado:,.2f}")
 
         with col2:
             st.markdown("### 🏷️ Recaudación Sellos")
-            st.metric(label="Planilla Diaria (Suma Renglones)", value=f"${tot_sellos_diaria:,.2f}")
-            st.metric(label="Planilla Totales (Suma Concepto)", value=f"${tot_sellos_totales:,.2f}")
+            st.metric(label="Planilla Diaria", value=f"${tot_sellos_diaria:,.2f}")
+            st.metric(label="Planilla Totales", value=f"${tot_sellos_totales:,.2f}")
             diff_sellos = round(tot_sellos_diaria - tot_sellos_totales, 2)
             if abs(diff_sellos) < 0.01:
                 st.success("✅ **ESTÁ OK (Sin diferencias en Sellos)**")
             else:
-                st.error(f"❌ **DIFERENCIA:** ${diff_sellos:,.2f}")
+                st.error(f"❌ **DIFERENCIA TOTAL:** ${diff_sellos:,.2f}")
 
         st.divider()
-        st.subheader("🕵️‍♂️ Auditor Inteligente (Vista Unificada y Detección Automática)")
+        st.subheader("🕵️‍♂️ Auditor Inteligente (Vista Unificada y Detección de Errores)")
 
-        # --- VISADOS: Tabla Unificada y Diagnóstico ---
+        # Función auxiliar para diagnóstico limpio por conjuntos de importes
+        def generar_diagnostico_limpio(lista_diaria, lista_totales, nombre_concepto):
+            d_vals = [round(float(x), 2) for x in lista_diaria if pd.notna(x) and float(x) != 0.0]
+            t_vals = [round(float(x), 2) for x in lista_totales if pd.notna(x) and float(x) != 0.0]
+            
+            c_d = Counter(d_vals)
+            c_t = Counter(t_vals)
+            
+            solo_d = list((c_d - c_t).elements())
+            solo_t = list((c_t - c_d).elements())
+            
+            if not solo_d and not solo_t:
+                st.success(f"✨ **{nombre_concepto}: Sin errores. Todos los registros coinciden perfectamente entre ambas planillas.**")
+            else:
+                st.error(f"🚨 **Desvíos encontrados en {nombre_concepto}:**")
+                if solo_d:
+                    st.markdown(f"- **Importes presentes en Planilla Diaria que NO están en Totales:**")
+                    for m in sorted(solo_d, reverse=True):
+                        st.markdown(f"  - 📌 `${m:,.2f}`")
+                if solo_t:
+                    st.markdown(f"- **Importes presentes en Planilla Totales que NO están en Diaria:**")
+                    for m in sorted(solo_t, reverse=True):
+                        st.markdown(f"  - 📌 `${m:,.2f}`")
+
+        # --- VISADOS: Tabla Unificada y Diagnóstico Limpio ---
         st.markdown("#### 🏛️ Detalle Comparativo: Tasa de Visado")
         df_d_v = df_d_filtered[[col_fecha_d, col_visado_f, 'Visado_Limpio']].sort_values(by='Visado_Limpio', ascending=False).reset_index(drop=True)
         df_t_v = df_t_filtered.loc[mask_tasa, [col_fecha_t, col_concepto_t, col_monto_t, 'Monto_Limpio']].sort_values(by='Monto_Limpio', ascending=False).reset_index(drop=True)
         
-        # Unir lado a lado con sufijos claros para un solo scrollbar
         df_merged_v = pd.concat([df_d_v.add_prefix('Diaria_'), df_t_v.add_prefix('Totales_')], axis=1)
         st.dataframe(df_merged_v, use_container_width=True)
 
-        # Diagnóstico Inteligente Visados
-        discrepancias_v = []
-        max_len_v = max(len(df_d_v), len(df_t_v))
-        for i in range(max_len_v):
-            val_d = df_d_v.loc[i, 'Visado_Limpio'] if i < len(df_d_v) else 0.0
-            val_t = df_t_v.loc[i, 'Monto_Limpio'] if i < len(df_t_v) else 0.0
-            if abs(val_d - val_t) > 0.01:
-                discrepancias_v.append(f"Fila {i+1}: Planilla Diaria tiene ${val_d:,.2f} vs Planilla Totales tiene ${val_t:,.2f}")
-
-        if len(discrepancias_v) == 0 and abs(diff_visado) < 0.01:
-            st.success("✨ **Auditoría Visados: Sin errores. Todos los registros coinciden perfectamente.**")
-        else:
-            st.error(f"🚨 **Desvíos Detectados en Visados:**\n" + "\n".join([f"- {d}" for d in discrepancias_v]))
+        generar_diagnostico_limpio(df_d_v['Visado_Limpio'], df_t_v['Monto_Limpio'], "Tasa de Visado")
 
         st.divider()
 
-        # --- SELLOS: Tabla Unificada y Diagnóstico ---
+        # --- SELLOS: Tabla Unificada y Diagnóstico Limpio ---
         st.markdown("#### 🏷️ Detalle Comparativo: Recaudación de Sellos")
         df_d_s = df_d_filtered[[col_fecha_d, col_sellos_d, 'Sellos_Limpio']].sort_values(by='Sellos_Limpio', ascending=False).reset_index(drop=True)
         df_t_s = df_t_filtered.loc[mask_sellos, [col_fecha_t, col_concepto_t, col_monto_t, 'Monto_Limpio']].sort_values(by='Monto_Limpio', ascending=False).reset_index(drop=True)
@@ -177,19 +194,7 @@ if file_diaria is not None and file_totales is not None:
         df_merged_s = pd.concat([df_d_s.add_prefix('Diaria_'), df_t_s.add_prefix('Totales_')], axis=1)
         st.dataframe(df_merged_s, use_container_width=True)
 
-        # Diagnóstico Inteligente Sellos
-        discrepancias_s = []
-        max_len_s = max(len(df_d_s), len(df_t_s))
-        for i in range(max_len_s):
-            val_d = df_d_s.loc[i, 'Sellos_Limpio'] if i < len(df_d_s) else 0.0
-            val_t = df_t_s.loc[i, 'Monto_Limpio'] if i < len(df_t_s) else 0.0
-            if abs(val_d - val_t) > 0.01:
-                discrepancias_s.append(f"Fila {i+1}: Planilla Diaria tiene ${val_d:,.2f} vs Planilla Totales tiene ${val_t:,.2f}")
-
-        if len(discrepancias_s) == 0 and abs(diff_sellos) < 0.01:
-            st.success("✨ **Auditoría Sellos: Sin errores. Todos los registros coinciden perfectamente.**")
-        else:
-            st.error(f"🚨 **Desvíos Detectados en Sellos:**\n" + "\n".join([f"- {d}" for d in discrepancias_s]))
+        generar_diagnostico_limpio(df_d_s['Sellos_Limpio'], df_t_s['Monto_Limpio'], "Recaudación de Sellos")
 
     except Exception as e:
         st.error(f"Ocurrió un error al procesar: {e}")
